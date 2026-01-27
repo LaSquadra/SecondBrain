@@ -304,7 +304,16 @@ Supported categories: `person`, `project`, `idea`, `admin`. The system will re-f
 
 Send any of these as a message to the bot:
 
-- `next` → Next Focus (last 14 days)
-- `today` or `daily` → Today digest
-- `week`, `this week`, or `weekly` → This Week digest
+- `next` → Next Focus (last 14 days; numbered list)
+- `today` or `daily` → Today digest (numbered list)
+- `week`, `this week`, or `weekly` → This Week digest (numbered list)
 - `help` → list available commands
+
+### Updating items (Webex)
+
+1. Send `next`, `today`, or `week` to get a numbered list.
+2. Reply with `update <number>` (example: `update 3`).
+3. The bot replies with a numbered field list. Reply with either:
+   - `<field_number> <new value>` (single message), or
+   - `<field_number>` and then the new value in the next message.
+4. Send `cancel` to abort.

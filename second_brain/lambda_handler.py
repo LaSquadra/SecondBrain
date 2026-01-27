@@ -5,7 +5,8 @@ import hmac
 import json
 import os
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 from hashlib import sha1
 from typing import Any, Dict, Optional
 
@@ -15,7 +16,10 @@ from second_brain.registry import build_adapter
 
 
 PROCESSED_IDS_PATH = "/tmp/webex_processed.json"
+STATE_PATH = "/tmp/webex_state.json"
 VALID_CATEGORIES = {"people", "projects", "ideas", "admin"}
+LIST_LIMIT = 20
+STATE_TTL_HOURS = 48
 
 
 def _verify_signature(secret: str, body: bytes, signature: str) -> bool:
@@ -64,6 +68,33 @@ def _save_processed_ids(ids: set[str]) -> None:
         json.dump(sorted(ids), handle)
 
 
+def _load_state() -> dict:
+    if not os.path.exists(STATE_PATH):
+        return {}
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    with open(STATE_PATH, "w", encoding="utf-8") as handle:
+        json.dump(state, handle)
+
+
+def _prune_state(state: dict) -> dict:
+    cutoff = datetime.now(timezone.utc).timestamp() - (STATE_TTL_HOURS * 3600)
+    for room_id, room_state in list(state.items()):
+        for person_id, data in list(room_state.items()):
+            updated_at = data.get("updated_at", 0)
+            if updated_at and updated_at < cutoff:
+                room_state.pop(person_id, None)
+        if not room_state:
+            state.pop(room_id, None)
+    return state
+
+
 def _parse_fix_category(text: str) -> str | None:
     if not text.lower().startswith("fix:"):
         return None
@@ -101,6 +132,29 @@ def _parse_command(text: str) -> str | None:
     if tokens == ["week"] or tokens == ["weekly"]:
         return "week"
     return None
+
+
+def _parse_update_request(text: str) -> int | None:
+    cleaned = _strip_bot_prefix(text).strip().lower()
+    if not cleaned.startswith("update"):
+        return None
+    remainder = cleaned[len("update") :].strip()
+    if remainder.startswith(":"):
+        remainder = remainder[1:].strip()
+    match = re.match(r"^(\d+)\b", remainder)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _parse_field_selection(text: str) -> tuple[int | None, str | None]:
+    cleaned = _strip_bot_prefix(text).strip()
+    match = re.match(r"^(\d+)(?:[\).:\-]\s*|\s+)?(.*)$", cleaned)
+    if not match:
+        return None, None
+    number = int(match.group(1))
+    value = match.group(2).strip()
+    return number, value or None
 
 
 def _strip_bot_prefix(text: str) -> str:
@@ -200,6 +254,76 @@ def _run_digest(digest_type: str, room_id: str, days: int, title: str, weekly: b
     )
 
 
+def _record_context(record: "StoredRecord") -> str:
+    fields = record.fields or {}
+    if record.category == "projects":
+        return (
+            fields.get("Next Action")
+            or fields.get("next_action")
+            or fields.get("Notes")
+            or fields.get("notes")
+            or ""
+        )
+    if record.category == "people":
+        return (
+            fields.get("Context")
+            or fields.get("context")
+            or fields.get("Follow Ups")
+            or fields.get("follow_ups")
+            or ""
+        )
+    if record.category == "ideas":
+        return fields.get("One Liner") or fields.get("one_liner") or fields.get("Notes") or fields.get("notes") or ""
+    return fields.get("Notes") or fields.get("notes") or ""
+
+
+def _send_digest_list(room_id: str, person_id: str, days: int, title: str) -> None:
+    config = load_config()
+    storage = build_adapter(config.storage.class_path, config.storage.settings)
+    records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+    lines = [title]
+    items = []
+    for idx, record in enumerate(records[:LIST_LIMIT], start=1):
+        context = _record_context(record)
+        line = f"{idx}) {record.category}: {record.title}"
+        if context:
+            line += f" — {context}"
+        lines.append(line)
+        items.append(
+            {
+                "record_id": record.record_id,
+                "category": record.category,
+                "title": record.title,
+                "fields": record.fields or {},
+            }
+        )
+    if not items:
+        lines.append("No items found.")
+    message = "\n".join(lines)
+    token = os.environ.get("WEBEX_BOT_TOKEN")
+    if token:
+        _webex_post_message(room_id, token, message)
+    state = _load_state()
+    state = _prune_state(state)
+    room_state = state.setdefault(room_id, {})
+    room_state[person_id] = {
+        "updated_at": datetime.now(timezone.utc).timestamp(),
+        "last_list": items,
+        "pending_update": None,
+    }
+    _save_state(state)
+
+
+def _build_field_options(record: dict, property_map: dict | None) -> list[dict]:
+    if property_map:
+        options = []
+        for key, meta in property_map.items():
+            options.append({"key": key, "name": meta.get("name", key)})
+        return options
+    fields = record.get("fields", {})
+    return [{"key": key, "name": key} for key in fields.keys()]
+
+
 def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     digest_type = event.get("digest") or event.get("detail", {}).get("digest")
     if digest_type in {"daily", "weekly"}:
@@ -263,22 +387,124 @@ def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     if text.startswith(("[SB DIGEST]", "Filed as", "Needs review", "Daily Digest", "Weekly Review")):
         return {"statusCode": 200, "body": "ignored system message"}
 
+    if _strip_bot_prefix(text).strip().lower() in {"cancel", "update cancel"}:
+        state = _load_state()
+        room_state = state.get(room_id, {})
+        person_id = message.get("personId", "")
+        if person_id in room_state:
+            room_state[person_id]["pending_update"] = None
+            room_state[person_id]["updated_at"] = datetime.now(timezone.utc).timestamp()
+            _save_state(state)
+        _webex_post_message(room_id, token, "Update canceled.")
+        return {"statusCode": 200, "body": "update canceled"}
+
+    state = _load_state()
+    state = _prune_state(state)
+    room_state = state.get(room_id, {})
+    person_state = room_state.get(message.get("personId", ""), {})
+    pending = person_state.get("pending_update")
+    if pending and pending.get("awaiting_value"):
+        field_key = pending.get("field_key")
+        field_name = pending.get("field_name", field_key)
+        if field_key:
+            record_id = pending["record_id"]
+            category = pending["category"]
+            config = load_config()
+            storage = build_adapter(config.storage.class_path, config.storage.settings)
+            record = storage.update_record(category, record_id, {field_key: text})
+            person_state["pending_update"] = None
+            person_state["updated_at"] = datetime.now(timezone.utc).timestamp()
+            room_state[message.get("personId", "")] = person_state
+            state[room_id] = room_state
+            _save_state(state)
+            _webex_post_message(room_id, token, f"Updated {record.title} — {field_name} set to '{text}'.")
+            return {"statusCode": 200, "body": "updated"}
+
+    if pending:
+        selection, value = _parse_field_selection(text)
+        if selection is None:
+            _webex_post_message(room_id, token, "Reply with a field number (e.g., `2`) or `2 New Value`.")
+            return {"statusCode": 200, "body": "awaiting field selection"}
+        fields = pending.get("fields", [])
+        if selection < 1 or selection > len(fields):
+            _webex_post_message(room_id, token, "That number is out of range. Try again.")
+            return {"statusCode": 200, "body": "field selection out of range"}
+        field = fields[selection - 1]
+        if value is None:
+            person_state["pending_update"]["field_key"] = field["key"]
+            person_state["pending_update"]["field_name"] = field["name"]
+            person_state["pending_update"]["awaiting_value"] = True
+            person_state["updated_at"] = datetime.now(timezone.utc).timestamp()
+            room_state[message.get("personId", "")] = person_state
+            state[room_id] = room_state
+            _save_state(state)
+            _webex_post_message(room_id, token, f"Send the new value for {field['name']}.")
+            return {"statusCode": 200, "body": "awaiting update value"}
+        record_id = pending["record_id"]
+        category = pending["category"]
+        update_key = field["key"]
+        config = load_config()
+        storage = build_adapter(config.storage.class_path, config.storage.settings)
+        record = storage.update_record(category, record_id, {update_key: value})
+        person_state["pending_update"] = None
+        person_state["updated_at"] = datetime.now(timezone.utc).timestamp()
+        room_state[message.get("personId", "")] = person_state
+        state[room_id] = room_state
+        _save_state(state)
+        _webex_post_message(room_id, token, f"Updated {record.title} — {field['name']} set to '{value}'.")
+        return {"statusCode": 200, "body": "updated"}
+
+    update_request = _parse_update_request(text)
+    if update_request is not None:
+        last_list = person_state.get("last_list", [])
+        if not last_list:
+            _webex_post_message(room_id, token, "No recent list found. Send `next`, `today`, or `week` first.")
+            return {"statusCode": 200, "body": "missing list"}
+        if update_request < 1 or update_request > len(last_list):
+            _webex_post_message(room_id, token, "That number is out of range. Try again.")
+            return {"statusCode": 200, "body": "update selection out of range"}
+        selected = last_list[update_request - 1]
+        config = load_config()
+        property_map = config.storage.settings.get("property_map", {}).get(selected["category"])
+        options = _build_field_options(selected, property_map)
+        lines = [f"Choose a field to update for {selected['title']}:"]
+        for idx, option in enumerate(options, start=1):
+            current = (selected.get("fields") or {}).get(option["name"], "")
+            if current:
+                lines.append(f"{idx}) {option['name']}: {current}")
+            else:
+                lines.append(f"{idx}) {option['name']}")
+        room_state[message.get("personId", "")] = {
+            "updated_at": datetime.now(timezone.utc).timestamp(),
+            "last_list": last_list,
+            "pending_update": {
+                "record_id": selected["record_id"],
+                "category": selected["category"],
+                "fields": options,
+                "awaiting_value": False,
+            },
+        }
+        state[room_id] = room_state
+        _save_state(state)
+        _webex_post_message(room_id, token, "\n".join(lines))
+        return {"statusCode": 200, "body": "update prompt sent"}
+
     command = _parse_command(text)
     if command:
         if command == "help":
             _webex_post_message(
                 room_id,
                 token,
-                "[SB HELP]\\nCommands: next | today | week | help\\nPrefixes: person:, project:, idea:, admin:\\nFix replies: fix: person|project|idea|admin",
+                "[SB HELP]\nCommands: next | today | week | help\nUpdate: update <number>\nPrefixes: person:, project:, idea:, admin:\nFix replies: fix: person|project|idea|admin\nCancel update: cancel",
             )
             return {"statusCode": 200, "body": "help sent"}
         if command == "week":
-            _run_digest("weekly", room_id, days=7, title="[SB DIGEST] This Week", weekly=True)
+            _send_digest_list(room_id, message.get("personId", ""), days=7, title="[SB DIGEST] This Week")
             return {"statusCode": 200, "body": "weekly digest sent"}
         if command == "today":
-            _run_digest("daily", room_id, days=1, title="[SB DIGEST] Today", weekly=False)
+            _send_digest_list(room_id, message.get("personId", ""), days=1, title="[SB DIGEST] Today")
             return {"statusCode": 200, "body": "daily digest sent"}
-        _run_digest("next", room_id, days=14, title="[SB DIGEST] Next Focus", weekly=False)
+        _send_digest_list(room_id, message.get("personId", ""), days=14, title="[SB DIGEST] Next Focus")
         return {"statusCode": 200, "body": "next digest sent"}
 
     fix_category = _parse_fix_category(text)
