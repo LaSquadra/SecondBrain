@@ -1,13 +1,20 @@
-# Second Brain Tool (Modular Python)
+# Second Brain Tool (Modular | Python)
 
-This is a modular Python3 implementation of the second-brain loop described in `second_brain_outline.txt`.
+This is a modular Python3 implementation of the second-brain loop described in Nate B. Jone's YouTube video.
+Thank you, Nate, for the inspiration!
+
 It is designed to let you swap capture, AI, storage, and notification adapters (Slack vs Webex, Notion vs Airtable, etc.)
 without changing core logic.
 
-## Quick Start (Local, No APIs)
+## Requirements
+
+- Python 3.10+ (stdlib only; no external dependencies required)
+- Optional: API credentials for OpenAI/Anthropic, Notion, Slack, or Webex depending on adapters and personal tech stack preferences.
+
+## Quick Start (Local)
 
 1. Copy `config.example.json` to `config.json`.
-2. Ensure your `.env` contains `OPENAI_API_KEY=...` (loaded automatically).
+2. Copy `.env.sample` to `.env` and fill in the values you need (at minimum `OPENAI_API_KEY`, unless you switch to the rule-based AI below).
 3. Capture a thought:
 
 ```bash
@@ -27,6 +34,42 @@ python3 -m second_brain.cli daily
 ```
 
 Local data is stored in `data/` as JSON.
+
+### No-API Local Mode (Optional)
+
+If you want to run without any API keys, switch the AI adapter to the rule-based classifier in `config.json`:
+
+```json
+{
+  "ai": {
+    "class": "second_brain.adapters.ai_rules.RuleBasedAI",
+    "settings": {}
+  }
+}
+```
+
+## Environment Variables
+
+`.env` is auto-loaded by `second_brain/config.py`. Any value in `config.json` that starts with `$` is treated as an env var reference (for example, `$OPENAI_API_KEY`).
+
+Required (depends on adapters/config):
+
+- `OPENAI_API_KEY`: used by `second_brain.adapters.ai_openai.OpenAIProvider`
+- `ANTHROPIC_API_KEY`: used by `second_brain.adapters.ai_anthropic.AnthropicProvider`
+- `NOTION_TOKEN`: used by `second_brain.adapters.storage_notion.NotionStorage`
+- `PEOPLE_DB`, `PROJECTS_DB`, `IDEAS_DB`, `ADMIN_DB`, `INBOX_LOG_DB`: Notion database IDs for each category (used by default `config.json`)
+- `SLACK_TOKEN`, `SLACK_CHANNEL_ID`: used by `second_brain.adapters.capture_slack.SlackCapture` and `second_brain.adapters.notifier_slack.SlackNotifier`
+- `WEBEX_BOT_TOKEN`: used by `second_brain.adapters.notifier_webex.WebexNotifier` and Lambda Webex bot
+
+Optional:
+
+- `SB_CONFIG_PATH`: override config file path (useful in Lambda)
+- `SB_RUN_PIPELINE`: `true` to process immediately after enqueue in Lambda (default), `false` to only enqueue
+- `WEBEX_WEBHOOK_SECRET`: Webex webhook signature verification secret (recommended for Lambda)
+- `WEBEX_BOT_EMAIL`, `WEBEX_BOT_ID`, `WEBEX_BOT_NAME`: used to ignore bot self-messages
+- `WEBEX_DIGEST_ROOM_ID`: Webex room ID for scheduled digests in Lambda
+- `SSL_CERT_FILE`: CA bundle path if you hit SSL issues (pass via `ca_bundle` in AI config)
+- `NOTION_PARENT_PAGE_ID`: parent page ID used by `scripts/setup_notion.py`
 
 ## Adapter Overview
 
@@ -118,6 +161,76 @@ Environment variables can be referenced with a leading `$` in `config.json`. `.e
 If you hit SSL certificate errors, set `SSL_CERT_FILE` to a valid CA bundle path (and pass it via `ca_bundle`).
 Rate-limit responses (HTTP 429) are retried with exponential backoff; you can tune `max_retries` and `retry_backoff`.
 
+## CLI Commands
+
+Capture:
+```bash
+python3 -m second_brain.cli capture "Follow up with Sam about the deck"
+```
+
+Process the queue:
+```bash
+python3 -m second_brain.cli run
+```
+
+Daily/weekly digests:
+```bash
+python3 -m second_brain.cli daily
+python3 -m second_brain.cli weekly
+```
+
+Update a stored record (by id or title):
+```bash
+python3 -m second_brain.cli update projects --id <record_id> --set status=Done --set next_action="Email vendor"
+python3 -m second_brain.cli update projects --name "Q1 Launch" --json '{"status":"Active","next_action":"Draft roadmap"}'
+```
+
+## Notion Setup
+
+1. Create a Notion integration and copy the internal integration token.
+2. Create (or select) a parent page where databases will live and copy its ID.
+3. Create (or select) five databases: People, Projects, Ideas, Admin, Inbox Log.
+4. Share each database with the integration.
+5. Copy each database ID and set these env vars: `PEOPLE_DB`, `PROJECTS_DB`, `IDEAS_DB`, `ADMIN_DB`, `INBOX_LOG_DB`
+6. Ensure each database has the exact property names and types below (these must match `config.json`):
+
+Optional automation:
+- Set `NOTION_PARENT_PAGE_ID` in `.env` and run:
+  ```bash
+  python3 scripts/setup_notion.py
+  ```
+  This creates all five databases and writes their IDs into `.env`. It requires `.env` to already exist (copy from `.env.sample`).
+
+People database:
+- `Name` (title)
+- `Context` (rich_text)
+- `Follow Ups` (rich_text)
+- `Last Touched` (date)
+
+Projects database:
+- `Name` (title)
+- `Status` (select)
+- `Next Action` (rich_text)
+- `Notes` (rich_text)
+
+Ideas database:
+- `Name` (title)
+- `One Liner` (rich_text)
+- `Notes` (rich_text)
+
+Admin database:
+- `Name` (title)
+- `Status` (select)
+- `Due Date` (date)
+- `Notes` (rich_text)
+
+Inbox Log database:
+- `Captured Text` (rich_text)
+- `Category` (select)
+- `Title` (title)
+- `Confidence` (rich_text)
+- `Status` (select)
+
 ## Extending to Webex / Teams
 
 Implement a new adapter that matches the interface in `second_brain/core/interfaces.py`:
@@ -142,6 +255,8 @@ This repo includes a Lambda handler that receives Webex webhook events, pulls th
 - `WEBEX_BOT_TOKEN`: Webex bot access token
 - `WEBEX_WEBHOOK_SECRET`: Webhook secret for signature verification (optional but recommended)
 - `WEBEX_BOT_EMAIL`: Bot email to ignore self-messages (optional)
+- `WEBEX_BOT_ID`: Bot ID to ignore self-messages (optional)
+- `WEBEX_BOT_NAME`: Bot name to ignore prefix in messages (optional)
 - `SB_CONFIG_PATH`: Path to your config JSON in Lambda (optional)
 - `SB_RUN_PIPELINE`: `true` to process immediately (default), `false` to only enqueue
 - `SSL_CERT_FILE`: CA bundle path if needed
