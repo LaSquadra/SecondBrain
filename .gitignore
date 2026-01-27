@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.venv/
+venv/
+ENV/
+
+# Environment files
+.env
+.env.*
+
+# Local data/output
+/data/
+/tmp/
+
+# Packaging artifacts
+lambda.zip
+
+# macOS
+.DS_Store

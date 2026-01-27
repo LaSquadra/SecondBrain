@@ -1,0 +1,70 @@
+{
+  "data_dir": "/tmp/second_brain",
+  "confidence_threshold": 0.6,
+  "capture": {
+    "class": "second_brain.adapters.capture_queue.QueueCapture",
+    "settings": {
+      "queue_path": "/tmp/second_brain/inbox_queue.json"
+    }
+  },
+  "ai": {
+    "class": "second_brain.adapters.ai_openai.OpenAIProvider",
+    "settings": {
+      "api_key": "$OPENAI_API_KEY",
+      "model": "gpt-4o-mini",
+      "ca_bundle": "$SSL_CERT_FILE"
+    }
+  },
+  "storage": {
+    "class": "second_brain.adapters.storage_notion.NotionStorage",
+    "settings": {
+      "token": "$NOTION_TOKEN",
+      "database_ids": {
+        "people": "$PEOPLE_DB",
+        "projects": "$PROJECTS_DB",
+        "ideas": "$IDEAS_DB",
+        "admin": "$ADMIN_DB",
+        "inbox_log": "$INBOX_LOG_DB"
+      },
+      "property_map": {
+        "people": {
+          "name": {"name": "Name", "type": "title"},
+          "context": {"name": "Context", "type": "rich_text"},
+          "follow_ups": {"name": "Follow Ups", "type": "rich_text"},
+          "last_touched": {"name": "Last Touched", "type": "date"}
+        },
+        "projects": {
+          "name": {"name": "Name", "type": "title"},
+          "status": {"name": "Status", "type": "select"},
+          "next_action": {"name": "Next Action", "type": "rich_text"},
+          "notes": {"name": "Notes", "type": "rich_text"}
+        },
+        "ideas": {
+          "name": {"name": "Name", "type": "title"},
+          "one_liner": {"name": "One Liner", "type": "rich_text"},
+          "notes": {"name": "Notes", "type": "rich_text"}
+        },
+        "admin": {
+          "name": {"name": "Name", "type": "title"},
+          "status": {"name": "Status", "type": "select"},
+          "due_date": {"name": "Due Date", "type": "date"},
+          "notes": {"name": "Notes", "type": "rich_text"}
+        },
+        "inbox_log": {
+          "captured_text": {"name": "Captured Text", "type": "rich_text"},
+          "category": {"name": "Category", "type": "select"},
+          "title": {"name": "Title", "type": "title"},
+          "confidence": {"name": "Confidence", "type": "rich_text"},
+          "status": {"name": "Status", "type": "select"}
+        }
+      }
+    }
+  },
+  "notifier": {
+    "class": "second_brain.adapters.notifier_webex.WebexNotifier",
+    "settings": {
+      "token": "$WEBEX_BOT_TOKEN",
+      "room_id": ""
+    }
+  }
+}

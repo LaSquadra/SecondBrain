@@ -1,0 +1,31 @@
+{
+  "data_dir": "/tmp/second_brain",
+  "confidence_threshold": 0.6,
+  "capture": {
+    "class": "second_brain.adapters.capture_queue.QueueCapture",
+    "settings": {
+      "queue_path": "/tmp/second_brain/inbox_queue.json"
+    }
+  },
+  "ai": {
+    "class": "second_brain.adapters.ai_openai.OpenAIProvider",
+    "settings": {
+      "api_key": "$OPENAI_API_KEY",
+      "model": "gpt-4o-mini",
+      "ca_bundle": "$SSL_CERT_FILE"
+    }
+  },
+  "storage": {
+    "class": "second_brain.adapters.storage_json.JsonStorage",
+    "settings": {
+      "base_dir": "/tmp/second_brain"
+    }
+  },
+  "notifier": {
+    "class": "second_brain.adapters.notifier_webex.WebexNotifier",
+    "settings": {
+      "token": "$WEBEX_BOT_TOKEN",
+      "room_id": ""
+    }
+  }
+}

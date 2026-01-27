@@ -1,0 +1,28 @@
+{
+  "data_dir": "data",
+  "confidence_threshold": 0.6,
+  "capture": {
+    "class": "second_brain.adapters.capture_queue.QueueCapture",
+    "settings": {
+      "queue_path": "data/inbox_queue.json"
+    }
+  },
+  "ai": {
+    "class": "second_brain.adapters.ai_openai.OpenAIProvider",
+    "settings": {
+      "api_key": "$OPENAI_API_KEY",
+      "model": "gpt-4o-mini",
+      "ca_bundle": "$SSL_CERT_FILE"
+    }
+  },
+  "storage": {
+    "class": "second_brain.adapters.storage_json.JsonStorage",
+    "settings": {
+      "base_dir": "data"
+    }
+  },
+  "notifier": {
+    "class": "second_brain.adapters.notifier_console.ConsoleNotifier",
+    "settings": {}
+  }
+}
