@@ -4,14 +4,15 @@ import base64
 import hmac
 import json
 import os
+import re
 import urllib.request
 from datetime import datetime, timezone
-import re
 from hashlib import sha1
 from typing import Any, Dict, Optional
 
 from second_brain.config import load_config
 from second_brain.core.pipeline import Pipeline, build_digest
+from second_brain.core.models import StoredRecord
 from second_brain.registry import build_adapter
 
 
@@ -254,7 +255,7 @@ def _run_digest(digest_type: str, room_id: str, days: int, title: str, weekly: b
     )
 
 
-def _record_context(record: "StoredRecord") -> str:
+def _record_context(record: StoredRecord) -> str:
     fields = record.fields or {}
     if record.category == "projects":
         return (
@@ -380,7 +381,9 @@ def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     if message.get("personEmail", "").endswith("@webex.bot"):
         return {"statusCode": 200, "body": "ignored bot"}
 
-    room_id = message.get("roomId")
+    room_id = message.get("roomId") or ""
+    if not room_id:
+        return {"statusCode": 200, "body": "missing room id"}
     text = (message.get("text") or "").strip()
     if not text:
         return {"statusCode": 200, "body": "empty message"}
