@@ -19,36 +19,44 @@
     "class": "second_brain.adapters.storage_notion.NotionStorage",
     "settings": {
       "token": "$NOTION_TOKEN",
+      "completed_database_id": "$COMPLETED_DB",
       "database_ids": {
         "people": "$PEOPLE_DB",
         "projects": "$PROJECTS_DB",
         "ideas": "$IDEAS_DB",
         "admin": "$ADMIN_DB",
-        "inbox_log": "$INBOX_LOG_DB"
+        "inbox_log": "$INBOX_LOG_DB",
+        "completed": "$COMPLETED_DB"
       },
       "property_map": {
         "people": {
           "name": {"name": "Name", "type": "title"},
           "context": {"name": "Context", "type": "rich_text"},
           "follow_ups": {"name": "Follow Ups", "type": "rich_text"},
-          "last_touched": {"name": "Last Touched", "type": "date"}
+          "last_touched": {"name": "Last Touched", "type": "date"},
+          "status": {"name": "Status", "type": "select"},
+          "priority": {"name": "Priority", "type": "select"}
         },
         "projects": {
           "name": {"name": "Name", "type": "title"},
           "status": {"name": "Status", "type": "select"},
           "next_action": {"name": "Next Action", "type": "rich_text"},
-          "notes": {"name": "Notes", "type": "rich_text"}
+          "notes": {"name": "Notes", "type": "rich_text"},
+          "priority": {"name": "Priority", "type": "select"}
         },
         "ideas": {
           "name": {"name": "Name", "type": "title"},
           "one_liner": {"name": "One Liner", "type": "rich_text"},
-          "notes": {"name": "Notes", "type": "rich_text"}
+          "notes": {"name": "Notes", "type": "rich_text"},
+          "status": {"name": "Status", "type": "select"},
+          "priority": {"name": "Priority", "type": "select"}
         },
         "admin": {
           "name": {"name": "Name", "type": "title"},
           "status": {"name": "Status", "type": "select"},
           "due_date": {"name": "Due Date", "type": "date"},
-          "notes": {"name": "Notes", "type": "rich_text"}
+          "notes": {"name": "Notes", "type": "rich_text"},
+          "priority": {"name": "Priority", "type": "select"}
         },
         "inbox_log": {
           "captured_text": {"name": "Captured Text", "type": "rich_text"},
@@ -56,6 +64,14 @@
           "title": {"name": "Title", "type": "title"},
           "confidence": {"name": "Confidence", "type": "rich_text"},
           "status": {"name": "Status", "type": "select"}
+        },
+        "completed": {
+          "name": {"name": "Name", "type": "title"},
+          "status": {"name": "Status", "type": "select"},
+          "next_action": {"name": "Next Action", "type": "rich_text"},
+          "notes": {"name": "Notes", "type": "rich_text"},
+          "due_date": {"name": "Due Date", "type": "date"},
+          "completed_date": {"name": "Completed Date", "type": "date"}
         }
       }
     }

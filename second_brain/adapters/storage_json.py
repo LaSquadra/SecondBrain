@@ -11,8 +11,9 @@ from second_brain.core.models import StoredRecord
 
 
 class JsonStorage(StorageAdapter):
-    def __init__(self, base_dir: str = "data") -> None:
+    def __init__(self, base_dir: str = "data", completed_table: str | None = None) -> None:
         self.base_dir = base_dir
+        self.completed_table = completed_table
 
     def store(self, category: str, record: dict) -> StoredRecord:
         record_id = str(uuid4())
@@ -84,7 +85,18 @@ class JsonStorage(StorageAdapter):
                     item["title"] = str(fields["name"])
                 elif "title" in fields and fields["title"]:
                     item["title"] = str(fields["title"])
-                self._write_table(category, items)
+                target_category = category
+                if self.completed_table and _is_completed_status(item.get("fields", {})):
+                    item.setdefault("fields", {})["completed_date"] = datetime.utcnow().date().isoformat()
+                    target_category = self.completed_table
+                    items.remove(item)
+                    self._write_table(category, items)
+                    completed_items = self._read_table(target_category)
+                    item["category"] = target_category
+                    completed_items.append(item)
+                    self._write_table(target_category, completed_items)
+                else:
+                    self._write_table(category, items)
                 created_at = datetime.fromisoformat(item["created_at"])
                 return StoredRecord(
                     category=item["category"],
@@ -94,6 +106,13 @@ class JsonStorage(StorageAdapter):
                     created_at=created_at,
                 )
         raise RuntimeError(f"Record id {record_id} not found in {category}.")
+
+
+def _is_completed_status(fields: dict) -> bool:
+    value = fields.get("status") or fields.get("Status")
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"done", "completed", "complete", "closed", "archived"}
 
     def _read_table(self, name: str) -> List[dict]:
         path = self._table_path(name)

@@ -21,10 +21,12 @@ class NotionStorage(StorageAdapter):
         token: str,
         database_ids: dict,
         property_map: dict,
+        completed_database_id: str | None = None,
     ) -> None:
         self.token = token
         self.database_ids = database_ids
         self.property_map = property_map
+        self.completed_database_id = completed_database_id
 
     def store(self, category: str, record: dict) -> StoredRecord:
         database_id = self.database_ids.get(category)
@@ -121,6 +123,16 @@ class NotionStorage(StorageAdapter):
             payload,
             method="PATCH",
         )
+        if self.completed_database_id and _is_completed_status(fields):
+            move_payload = {
+                "parent": {"database_id": self.completed_database_id},
+                "properties": {"Completed Date": {"date": {"start": datetime.utcnow().date().isoformat()}}},
+            }
+            response = self._request(
+                f"https://api.notion.com/v1/pages/{record_id}",
+                move_payload,
+                method="PATCH",
+            )
         created = response.get("created_time")
         created_at = datetime.fromisoformat(created.replace("Z", "+00:00")) if created else datetime.utcnow()
         properties = response.get("properties", {})
@@ -224,6 +236,14 @@ def _get_title_property_name(mapping: dict) -> str:
         if prop.get("type") == "title":
             return prop.get("name", "Name")
     return "Name"
+
+
+def _is_completed_status(fields: dict) -> bool:
+    value = fields.get("status") or fields.get("Status")
+    if value is None:
+        return False
+    normalized = str(value).strip().lower()
+    return normalized in {"done", "completed", "complete", "closed", "archived"}
 
 
 def _extract_fields(properties: dict) -> dict:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Iterable, List, Optional
 
@@ -29,14 +30,17 @@ class Pipeline:
         items = self.capture.fetch()
         stored: List[StoredRecord] = []
         for item in items:
-            result = self.ai.classify(item.text)
-            stored_record = self._handle_classification(item, result)
+            cleaned_text, priority, explicit_priority = _extract_priority(item.text)
+            if priority is None:
+                priority = _infer_priority(cleaned_text)
+            result = self.ai.classify(cleaned_text)
+            stored_record = self._handle_classification(item, result, priority, explicit_priority)
             if stored_record:
                 stored.append(stored_record)
         return stored
 
     def _handle_classification(
-        self, item: CaptureItem, result: ClassificationResult
+        self, item: CaptureItem, result: ClassificationResult, priority: int, explicit_priority: bool
     ) -> Optional[StoredRecord]:
         category = result.category
         if category not in VALID_CATEGORIES:
@@ -70,6 +74,10 @@ class Pipeline:
         record_fields = dict(result.fields)
         if "name" not in record_fields and "title" not in record_fields:
             record_fields["name"] = result.title
+        if explicit_priority:
+            record_fields["priority"] = str(priority)
+        elif "priority" not in record_fields and "Priority" not in record_fields:
+            record_fields["priority"] = str(priority)
         if category == "people":
             record_fields["last_touched"] = datetime.utcnow().date().isoformat()
         if category == "admin":
@@ -121,3 +129,26 @@ def _is_reasonable_due_date(value: str) -> bool:
     except ValueError:
         return False
     return due >= datetime.utcnow().date()
+
+
+def _extract_priority(text: str) -> tuple[str, Optional[int], bool]:
+    pattern = re.compile(r"(?:^|\\s)(--priority|-p)(?:\\s+|=)([1-5])\\b", re.IGNORECASE)
+    match = pattern.search(text)
+    if not match:
+        return text, None, False
+    value = int(match.group(2))
+    cleaned = pattern.sub(" ", text).strip()
+    return cleaned, value, True
+
+
+def _infer_priority(text: str) -> int:
+    lowered = text.lower()
+    if any(word in lowered for word in ("urgent", "asap", "immediately", "right away", "critical", "blocker")):
+        return 1
+    if any(word in lowered for word in ("high priority", "important", "deadline", "today", "tomorrow")):
+        return 2
+    if any(word in lowered for word in ("low priority", "whenever", "nice to have", "someday", "later")):
+        return 4
+    if "backlog" in lowered:
+        return 5
+    return 3
