@@ -17,6 +17,7 @@ TARGET_ENV_KEYS = {
     "IDEAS_DB",
     "ADMIN_DB",
     "INBOX_LOG_DB",
+    "COMPLETED_DB",
 }
 
 
@@ -129,6 +130,8 @@ def main() -> int:
                 "Context": {"rich_text": {}},
                 "Follow Ups": {"rich_text": {}},
                 "Last Touched": {"date": {}},
+                "Status": {"select": {"options": []}},
+                "Priority": {"select": {"options": []}},
             },
         ),
         (
@@ -139,6 +142,7 @@ def main() -> int:
                 "Status": {"select": {"options": []}},
                 "Next Action": {"rich_text": {}},
                 "Notes": {"rich_text": {}},
+                "Priority": {"select": {"options": []}},
             },
         ),
         (
@@ -148,6 +152,8 @@ def main() -> int:
                 "Name": {"title": {}},
                 "One Liner": {"rich_text": {}},
                 "Notes": {"rich_text": {}},
+                "Status": {"select": {"options": []}},
+                "Priority": {"select": {"options": []}},
             },
         ),
         (
@@ -158,6 +164,7 @@ def main() -> int:
                 "Status": {"select": {"options": []}},
                 "Due Date": {"date": {}},
                 "Notes": {"rich_text": {}},
+                "Priority": {"select": {"options": []}},
             },
         ),
         (
@@ -169,6 +176,18 @@ def main() -> int:
                 "Title": {"title": {}},
                 "Confidence": {"rich_text": {}},
                 "Status": {"select": {"options": []}},
+            },
+        ),
+        (
+            "Completed",
+            "COMPLETED_DB",
+            {
+                "Name": {"title": {}},
+                "Status": {"select": {"options": []}},
+                "Next Action": {"rich_text": {}},
+                "Notes": {"rich_text": {}},
+                "Due Date": {"date": {}},
+                "Completed Date": {"date": {}},
             },
         ),
     ]

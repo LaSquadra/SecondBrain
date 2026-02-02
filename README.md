@@ -58,6 +58,7 @@ Required (depends on adapters/config):
 - `ANTHROPIC_API_KEY`: used by `second_brain.adapters.ai_anthropic.AnthropicProvider`
 - `NOTION_TOKEN`: used by `second_brain.adapters.storage_notion.NotionStorage`
 - `PEOPLE_DB`, `PROJECTS_DB`, `IDEAS_DB`, `ADMIN_DB`, `INBOX_LOG_DB`: Notion database IDs for each category (used by default `config.json`)
+- `COMPLETED_DB`: Notion database ID for completed items (optional; used for auto-move on update)
 - `SLACK_TOKEN`, `SLACK_CHANNEL_ID`: used by `second_brain.adapters.capture_slack.SlackCapture` and `second_brain.adapters.notifier_slack.SlackNotifier`
 - `WEBEX_BOT_TOKEN`: used by `second_brain.adapters.notifier_webex.WebexNotifier` and Lambda Webex bot
 
@@ -70,6 +71,7 @@ Optional:
 - `WEBEX_DIGEST_ROOM_ID`: Webex room ID for scheduled digests in Lambda
 - `SSL_CERT_FILE`: CA bundle path if you hit SSL issues (pass via `ca_bundle` in AI config)
 - `NOTION_PARENT_PAGE_ID`: parent page ID used by `scripts/setup_notion.py`
+- `SB_EXTRACTIVE_DIGESTS`: `true` to send list-style digests from Lambda (default), `false` to use AI summarization
 
 ## Adapter Overview
 
@@ -167,6 +169,7 @@ Capture:
 ```bash
 python3 -m second_brain.cli capture "Follow up with Sam about the deck"
 ```
+You can also set priority with `--priority 2` or `-p 2` in the capture text (applies to Webex and CLI captures).
 
 Process the queue:
 ```bash
@@ -191,7 +194,7 @@ python3 -m second_brain.cli update projects --name "Q1 Launch" --json '{"status"
 2. Create (or select) a parent page where databases will live and copy its ID.
 3. Create (or select) five databases: People, Projects, Ideas, Admin, Inbox Log.
 4. Share each database with the integration.
-5. Copy each database ID and set these env vars: `PEOPLE_DB`, `PROJECTS_DB`, `IDEAS_DB`, `ADMIN_DB`, `INBOX_LOG_DB`
+5. Copy each database ID and set these env vars: `PEOPLE_DB`, `PROJECTS_DB`, `IDEAS_DB`, `ADMIN_DB`, `INBOX_LOG_DB`, and optional `COMPLETED_DB`
 6. Ensure each database has the exact property names and types below (these must match `config.json`):
 
 Optional automation:
@@ -199,30 +202,36 @@ Optional automation:
   ```bash
   python3 scripts/setup_notion.py
   ```
-  This creates all five databases and writes their IDs into `.env`. It requires `.env` to already exist (copy from `.env.sample`).
+  This creates all five databases plus a Completed database and writes their IDs into `.env`. It requires `.env` to already exist (copy from `.env.sample`).
 
 People database:
 - `Name` (title)
 - `Context` (rich_text)
 - `Follow Ups` (rich_text)
 - `Last Touched` (date)
+- `Status` (select)
+- `Priority` (select)
 
 Projects database:
 - `Name` (title)
 - `Status` (select)
 - `Next Action` (rich_text)
 - `Notes` (rich_text)
+- `Priority` (select)
 
 Ideas database:
 - `Name` (title)
 - `One Liner` (rich_text)
 - `Notes` (rich_text)
+- `Status` (select)
+- `Priority` (select)
 
 Admin database:
 - `Name` (title)
 - `Status` (select)
 - `Due Date` (date)
 - `Notes` (rich_text)
+- `Priority` (select)
 
 Inbox Log database:
 - `Captured Text` (rich_text)
@@ -230,6 +239,14 @@ Inbox Log database:
 - `Title` (title)
 - `Confidence` (rich_text)
 - `Status` (select)
+
+Completed database:
+- `Name` (title)
+- `Status` (select)
+- `Next Action` (rich_text)
+- `Notes` (rich_text)
+- `Due Date` (date)
+- `Completed Date` (date)
 
 ## Extending to Webex / Teams
 
@@ -317,3 +334,19 @@ Send any of these as a message to the bot:
    - `<field_number> <new value>` (single message), or
    - `<field_number>` and then the new value in the next message.
 4. Send `cancel` to abort.
+5. Update sessions expire after 30 minutes of inactivity.
+
+### Completed items (Optional)
+
+If `COMPLETED_DB` is set in `.env`, any update that sets `status` to a completed value (`done`, `completed`, `complete`, `closed`, or `archived`) will move the record into the Completed database.
+
+### Daily digest fallback (Webex)
+
+If there are no items created in the last day, the Daily Digest will fall back to older open items (not completed), prioritized by status (blocked/in progress/active first) and then oldest first.
+
+### Priority handling
+
+- Add `--priority 1-5` or `-p 1-5` to any captured message to set priority.
+- If no priority is provided, the system infers it from keywords (urgent/asap/important/etc.). If unclear, it defaults to `3`.
+- Lists returned by `today`, `week`, and `next` are sorted by priority (1 highest) and then by age.
+- If you explicitly set a priority with `--priority`/`-p`, it overrides any AI-provided priority.

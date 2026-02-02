@@ -20,7 +20,8 @@ PROCESSED_IDS_PATH = "/tmp/webex_processed.json"
 STATE_PATH = "/tmp/webex_state.json"
 VALID_CATEGORIES = {"people", "projects", "ideas", "admin"}
 LIST_LIMIT = 20
-STATE_TTL_HOURS = 48
+STATE_TTL_MINUTES = 30
+COMPLETED_STATUSES = {"done", "completed", "complete", "closed", "archived"}
 
 
 def _verify_signature(secret: str, body: bytes, signature: str) -> bool:
@@ -85,7 +86,7 @@ def _save_state(state: dict) -> None:
 
 
 def _prune_state(state: dict) -> dict:
-    cutoff = datetime.now(timezone.utc).timestamp() - (STATE_TTL_HOURS * 3600)
+    cutoff = datetime.now(timezone.utc).timestamp() - (STATE_TTL_MINUTES * 60)
     for room_id, room_state in list(state.items()):
         for person_id, data in list(room_state.items()):
             updated_at = data.get("updated_at", 0)
@@ -224,7 +225,11 @@ def _run_digest(digest_type: str, room_id: str, days: int, title: str, weekly: b
                 notifier_settings["token"] = token
     notifier = build_adapter(config.notifier.class_path, notifier_settings)
     if os.environ.get("SB_EXTRACTIVE_DIGESTS", "true").lower() == "true":
-        records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+        if days == 1:
+            records = _select_daily_records(storage, days=days)
+        else:
+            records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+            records.sort(key=lambda r: (_priority_value(r), r.created_at))
         lines = []
         for record in records[:20]:
             fields = record.fields or {}
@@ -278,10 +283,67 @@ def _record_context(record: StoredRecord) -> str:
     return fields.get("Notes") or fields.get("notes") or ""
 
 
+def _status_value(record: StoredRecord) -> str:
+    fields = record.fields or {}
+    value = fields.get("Status") or fields.get("status") or ""
+    return str(value).strip().lower()
+
+
+def _priority_value(record: StoredRecord) -> int:
+    fields = record.fields or {}
+    raw = fields.get("Priority") or fields.get("priority") or ""
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return 3
+    if value < 1 or value > 5:
+        return 3
+    return value
+
+
+def _status_priority(status: str) -> int:
+    if status in {"blocked", "in progress", "active"}:
+        return 0
+    if status in {"open", "doing", "next", "todo"}:
+        return 1
+    if status in {"backlog", "someday", "later"}:
+        return 2
+    if status in COMPLETED_STATUSES:
+        return 9
+    return 3
+
+
+def _filter_open_records(records: list[StoredRecord]) -> list[StoredRecord]:
+    filtered = []
+    for record in records:
+        status = _status_value(record)
+        if status and status in COMPLETED_STATUSES:
+            continue
+        filtered.append(record)
+    return filtered
+
+
+def _select_daily_records(storage, days: int) -> list[StoredRecord]:
+    recent = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+    if recent:
+        recent.sort(key=lambda r: (_priority_value(r), r.created_at))
+        return recent
+    all_records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=None)
+    open_records = _filter_open_records(all_records)
+    open_records.sort(
+        key=lambda r: (_priority_value(r), _status_priority(_status_value(r)), r.created_at)
+    )
+    return open_records[:LIST_LIMIT]
+
+
 def _send_digest_list(room_id: str, person_id: str, days: int, title: str) -> None:
     config = load_config()
     storage = build_adapter(config.storage.class_path, config.storage.settings)
-    records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+    if days == 1:
+        records = _select_daily_records(storage, days=days)
+    else:
+        records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+        records.sort(key=lambda r: (_priority_value(r), r.created_at))
     lines = [title]
     items = []
     for idx, record in enumerate(records[:LIST_LIMIT], start=1):
@@ -498,7 +560,7 @@ def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
             _webex_post_message(
                 room_id,
                 token,
-                "[SB HELP]\nCommands: next | today | week | help\nUpdate: update <number>\nPrefixes: person:, project:, idea:, admin:\nFix replies: fix: person|project|idea|admin\nCancel update: cancel",
+                "[SB HELP]  \nCommands: next | today | week | help  \nUpdate: update <number>  \nPrefixes: person:, project:, idea:, admin:  \nFix replies: fix: person|project|idea|admin  \nCancel update: cancel",
             )
             return {"statusCode": 200, "body": "help sent"}
         if command == "week":
