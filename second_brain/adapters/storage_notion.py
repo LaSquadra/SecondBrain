@@ -124,15 +124,39 @@ class NotionStorage(StorageAdapter):
             method="PATCH",
         )
         if self.completed_database_id and _is_completed_status(fields):
-            move_payload = {
-                "parent": {"database_id": self.completed_database_id},
-                "properties": {"Completed Date": {"date": {"start": datetime.utcnow().date().isoformat()}}},
-            }
+            move_payload = {"parent": {"database_id": self.completed_database_id}}
             response = self._request(
                 f"https://api.notion.com/v1/pages/{record_id}",
                 move_payload,
                 method="PATCH",
             )
+            try:
+                page = self._request(f"https://api.notion.com/v1/pages/{record_id}", method="GET")
+                if page.get("parent", {}).get("database_id") != self.completed_database_id:
+                    completed_mapping = self.property_map.get("completed")
+                    if not completed_mapping:
+                        raise RuntimeError("Missing property map for completed database.")
+                    fields, unmapped = _extract_fields_by_mapping(page.get("properties", {}), completed_mapping)
+                    if unmapped:
+                        notes_key = _find_notes_key(completed_mapping)
+                        if notes_key:
+                            existing = fields.get(notes_key, "")
+                            extra = "\\n".join(unmapped)
+                            fields[notes_key] = f"{existing}\\n{extra}".strip() if existing else extra
+                    properties = _build_properties(fields, completed_mapping)
+                    create_payload = {
+                        "parent": {"database_id": self.completed_database_id},
+                        "properties": properties,
+                    }
+                    created = self._request("https://api.notion.com/v1/pages", create_payload)
+                    self._request(
+                        f"https://api.notion.com/v1/pages/{record_id}",
+                        {"archived": True},
+                        method="PATCH",
+                    )
+                    response = created
+            except Exception:
+                pass
         created = response.get("created_time")
         created_at = datetime.fromisoformat(created.replace("Z", "+00:00")) if created else datetime.utcnow()
         properties = response.get("properties", {})
@@ -156,7 +180,7 @@ class NotionStorage(StorageAdapter):
         request.add_header("Notion-Version", "2022-06-28")
         request.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=8) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             error_body = ""
@@ -182,24 +206,7 @@ def _build_properties(record: dict, mapping: dict) -> dict:
     for field, prop in mapping.items():
         value = record.get(field, "")
         prop_type = prop.get("type", "rich_text")
-        if prop_type == "title":
-            content = "" if value is None else str(value)
-            properties[prop["name"]] = {"title": [{"text": {"content": content}}]}
-        elif prop_type == "rich_text":
-            content = "" if value is None else str(value)
-            properties[prop["name"]] = {"rich_text": [{"text": {"content": content}}]}
-        elif prop_type == "select":
-            if value in (None, ""):
-                properties[prop["name"]] = {"select": None}
-            else:
-                properties[prop["name"]] = {"select": {"name": str(value)}}
-        elif prop_type == "date":
-            if value in (None, ""):
-                properties[prop["name"]] = {"date": None}
-            else:
-                properties[prop["name"]] = {"date": {"start": str(value)}}
-        else:
-            properties[prop["name"]] = {"rich_text": [{"text": {"content": str(value)}}]}
+        properties[prop["name"]] = _serialize_property(prop_type, value)
     return properties
 
 
@@ -210,25 +217,25 @@ def _build_properties_partial(record: dict, mapping: dict) -> dict:
         if not prop:
             raise RuntimeError(f"Unknown field '{field}' for Notion mapping.")
         prop_type = prop.get("type", "rich_text")
-        if prop_type == "title":
-            content = "" if value is None else str(value)
-            properties[prop["name"]] = {"title": [{"text": {"content": content}}]}
-        elif prop_type == "rich_text":
-            content = "" if value is None else str(value)
-            properties[prop["name"]] = {"rich_text": [{"text": {"content": content}}]}
-        elif prop_type == "select":
-            if value in (None, ""):
-                properties[prop["name"]] = {"select": None}
-            else:
-                properties[prop["name"]] = {"select": {"name": str(value)}}
-        elif prop_type == "date":
-            if value in (None, ""):
-                properties[prop["name"]] = {"date": None}
-            else:
-                properties[prop["name"]] = {"date": {"start": str(value)}}
-        else:
-            properties[prop["name"]] = {"rich_text": [{"text": {"content": str(value)}}]}
+        properties[prop["name"]] = _serialize_property(prop_type, value)
     return properties
+
+
+def _serialize_property(prop_type: str, value: object) -> dict:
+    if prop_type == "select":
+        if value in (None, ""):
+            return {"select": None}
+        return {"select": {"name": str(value)}}
+    if prop_type == "date":
+        if value in (None, ""):
+            return {"date": None}
+        return {"date": {"start": str(value)}}
+    content = "" if value is None else str(value)
+    if prop_type == "title":
+        return {"title": [{"text": {"content": content}}]}
+    if prop_type == "rich_text":
+        return {"rich_text": [{"text": {"content": content}}]}
+    return {"rich_text": [{"text": {"content": content}}]}
 
 
 def _get_title_property_name(mapping: dict) -> str:
@@ -263,3 +270,53 @@ def _extract_fields(properties: dict) -> dict:
         else:
             fields[name] = ""
     return fields
+
+
+def _extract_fields_by_mapping(properties: dict, mapping: dict) -> tuple[dict, list[str]]:
+    fields = {}
+    unmapped = []
+    mapped_names = {prop.get("name") for prop in mapping.values() if prop.get("name")}
+    for field_key, prop in mapping.items():
+        name = prop.get("name")
+        if not name:
+            continue
+        prop_data = properties.get(name, {})
+        prop_type = prop_data.get("type")
+        if prop_type == "title":
+            values = prop_data.get("title", [])
+            fields[field_key] = " ".join(v.get("plain_text", "") for v in values).strip()
+        elif prop_type == "rich_text":
+            values = prop_data.get("rich_text", [])
+            fields[field_key] = " ".join(v.get("plain_text", "") for v in values).strip()
+        elif prop_type == "select":
+            fields[field_key] = (prop_data.get("select") or {}).get("name", "")
+        elif prop_type == "date":
+            fields[field_key] = (prop_data.get("date") or {}).get("start", "")
+        else:
+            fields[field_key] = ""
+    for name, prop_data in properties.items():
+        if name in mapped_names:
+            continue
+        prop_type = prop_data.get("type")
+        if prop_type == "title":
+            values = prop_data.get("title", [])
+            text = " ".join(v.get("plain_text", "") for v in values).strip()
+        elif prop_type == "rich_text":
+            values = prop_data.get("rich_text", [])
+            text = " ".join(v.get("plain_text", "") for v in values).strip()
+        elif prop_type == "select":
+            text = (prop_data.get("select") or {}).get("name", "")
+        elif prop_type == "date":
+            text = (prop_data.get("date") or {}).get("start", "")
+        else:
+            text = ""
+        if text:
+            unmapped.append(f"{name}: {text}")
+    return fields, unmapped
+
+
+def _find_notes_key(mapping: dict) -> str | None:
+    for key, prop in mapping.items():
+        if prop.get("name") == "Notes" and prop.get("type") == "rich_text":
+            return key
+    return None

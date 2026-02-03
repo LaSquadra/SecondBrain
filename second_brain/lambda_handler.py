@@ -19,6 +19,7 @@ from second_brain.registry import build_adapter
 PROCESSED_IDS_PATH = "/tmp/webex_processed.json"
 STATE_PATH = "/tmp/webex_state.json"
 VALID_CATEGORIES = {"people", "projects", "ideas", "admin"}
+CATEGORIES = ["projects", "people", "ideas", "admin"]
 LIST_LIMIT = 20
 STATE_TTL_MINUTES = 30
 COMPLETED_STATUSES = {"done", "completed", "complete", "closed", "archived"}
@@ -40,7 +41,7 @@ def _webex_get_message(message_id: str, token: str) -> Dict[str, Any]:
     url = f"https://webexapis.com/v1/messages/{message_id}"
     request = urllib.request.Request(url, method="GET")
     request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=8) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -50,7 +51,7 @@ def _webex_post_message(room_id: str, token: str, text: str) -> None:
     request = urllib.request.Request(url, data=payload, method="POST")
     request.add_header("Authorization", f"Bearer {token}")
     request.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=8) as response:
         response.read()
 
 
@@ -104,15 +105,16 @@ def _parse_fix_category(text: str) -> str | None:
     if not remainder:
         return None
     token = remainder.split()[0]
-    if token in ("person", "people"):
-        return "people"
-    if token in ("project", "projects"):
-        return "projects"
-    if token in ("idea", "ideas"):
-        return "ideas"
-    if token == "admin":
-        return "admin"
-    return None
+    mapping = {
+        "person": "people",
+        "people": "people",
+        "project": "projects",
+        "projects": "projects",
+        "idea": "ideas",
+        "ideas": "ideas",
+        "admin": "admin",
+    }
+    return mapping.get(token)
 
 
 def _parse_command(text: str) -> str | None:
@@ -123,7 +125,7 @@ def _parse_command(text: str) -> str | None:
     tokens = [t for t in cleaned.split() if t]
     if not tokens:
         return None
-    if tokens == ["help"] or tokens == ["commands"] or tokens == ["?"]:
+    if tokens == ["help"] or tokens == ["commands"]:
         return "help"
     if tokens == ["this", "week"]:
         return "week"
@@ -228,19 +230,11 @@ def _run_digest(digest_type: str, room_id: str, days: int, title: str, weekly: b
         if days == 1:
             records = _select_daily_records(storage, days=days)
         else:
-            records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+            records = storage.list_records(categories=CATEGORIES, days=days)
             records.sort(key=lambda r: (_priority_value(r), r.created_at))
         lines = []
-        for record in records[:20]:
-            fields = record.fields or {}
-            if record.category == "projects":
-                context = fields.get("Next Action") or fields.get("next_action") or fields.get("Notes") or fields.get("notes")
-            elif record.category == "people":
-                context = fields.get("Context") or fields.get("context") or fields.get("Follow Ups") or fields.get("follow_ups")
-            elif record.category == "ideas":
-                context = fields.get("One Liner") or fields.get("one_liner") or fields.get("Notes") or fields.get("notes")
-            else:
-                context = fields.get("Notes") or fields.get("notes")
+        for record in records[:LIST_LIMIT]:
+            context = _record_context(record)
             if context:
                 lines.append(f"- {record.category}: {record.title} — {context}")
             else:
@@ -253,7 +247,7 @@ def _run_digest(digest_type: str, room_id: str, days: int, title: str, weekly: b
         ai=ai,
         storage=storage,
         notifier=notifier,
-        categories=["projects", "people", "ideas", "admin"],
+        categories=CATEGORIES,
         days=days,
         title=title,
         weekly=weekly,
@@ -324,11 +318,11 @@ def _filter_open_records(records: list[StoredRecord]) -> list[StoredRecord]:
 
 
 def _select_daily_records(storage, days: int) -> list[StoredRecord]:
-    recent = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+    recent = storage.list_records(categories=CATEGORIES, days=days)
     if recent:
         recent.sort(key=lambda r: (_priority_value(r), r.created_at))
         return recent
-    all_records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=None)
+    all_records = storage.list_records(categories=CATEGORIES, days=None)
     open_records = _filter_open_records(all_records)
     open_records.sort(
         key=lambda r: (_priority_value(r), _status_priority(_status_value(r)), r.created_at)
@@ -342,7 +336,7 @@ def _send_digest_list(room_id: str, person_id: str, days: int, title: str) -> No
     if days == 1:
         records = _select_daily_records(storage, days=days)
     else:
-        records = storage.list_records(categories=["projects", "people", "ideas", "admin"], days=days)
+        records = storage.list_records(categories=CATEGORIES, days=days)
         records.sort(key=lambda r: (_priority_value(r), r.created_at))
     lines = [title]
     items = []

@@ -66,19 +66,21 @@ class JsonStorage(StorageAdapter):
 
     def find_record_by_title(self, category: str, title: str) -> str | None:
         items = self._read_table(category)
-        matches = [item for item in items if item.get("title") == title]
-        if not matches:
-            return None
-        if len(matches) > 1:
-            ids = [item.get("id") for item in matches]
-            raise RuntimeError(f"Multiple records match '{title}' in {category}: {ids}")
-        return matches[0].get("id")
+        match = None
+        for item in items:
+            if item.get("title") != title:
+                continue
+            if match is not None:
+                ids = [match.get("id"), item.get("id")]
+                raise RuntimeError(f"Multiple records match '{title}' in {category}: {ids}")
+            match = item
+        return match.get("id") if match else None
 
     def update_record(self, category: str, record_id: str, fields: dict) -> StoredRecord:
         items = self._read_table(category)
         for item in items:
             if item.get("id") == record_id:
-                stored_fields = item.get("fields", {})
+                stored_fields = item.get("fields") or {}
                 stored_fields.update(fields)
                 item["fields"] = stored_fields
                 if "name" in fields and fields["name"]:
@@ -107,13 +109,6 @@ class JsonStorage(StorageAdapter):
                 )
         raise RuntimeError(f"Record id {record_id} not found in {category}.")
 
-
-def _is_completed_status(fields: dict) -> bool:
-    value = fields.get("status") or fields.get("Status")
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"done", "completed", "complete", "closed", "archived"}
-
     def _read_table(self, name: str) -> List[dict]:
         path = self._table_path(name)
         if not os.path.exists(path):
@@ -129,3 +124,10 @@ def _is_completed_status(fields: dict) -> bool:
 
     def _table_path(self, name: str) -> str:
         return os.path.join(self.base_dir, f"{name}.json")
+
+
+def _is_completed_status(fields: dict) -> bool:
+    value = fields.get("status") or fields.get("Status")
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"done", "completed", "complete", "closed", "archived"}
