@@ -246,7 +246,6 @@ Completed database:
 - `Next Action` (rich_text)
 - `Notes` (rich_text)
 - `Due Date` (date)
-- `Completed Date` (date)
 
 ## Extending to Webex / Teams
 
@@ -339,6 +338,7 @@ Send any of these as a message to the bot:
 ### Completed items (Optional)
 
 If `COMPLETED_DB` is set in `.env`, any update that sets `status` to a completed value (`done`, `completed`, `complete`, `closed`, or `archived`) will move the record into the Completed database.
+If the Notion API does not allow a direct move, the system falls back to creating a new page in Completed and archiving the original.
 
 ### Daily digest fallback (Webex)
 

@@ -187,7 +187,6 @@ def main() -> int:
                 "Next Action": {"rich_text": {}},
                 "Notes": {"rich_text": {}},
                 "Due Date": {"date": {}},
-                "Completed Date": {"date": {}},
             },
         ),
     ]

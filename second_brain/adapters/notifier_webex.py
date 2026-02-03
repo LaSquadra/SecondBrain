@@ -26,5 +26,5 @@ class WebexNotifier(Notifier):
         request = urllib.request.Request(url, data=payload, method="POST")
         request.add_header("Authorization", f"Bearer {self.token}")
         request.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=8) as response:
             response.read()

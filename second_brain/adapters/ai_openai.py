@@ -72,7 +72,7 @@ class OpenAIProvider(AIProvider):
             context = ssl.create_default_context(cafile=self.ca_bundle)
         for attempt in range(self.max_retries + 1):
             try:
-                with urllib.request.urlopen(request, context=context) as response:
+                with urllib.request.urlopen(request, context=context, timeout=8) as response:
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 if exc.code == 429 and attempt < self.max_retries:

@@ -25,8 +25,7 @@
         "projects": "$PROJECTS_DB",
         "ideas": "$IDEAS_DB",
         "admin": "$ADMIN_DB",
-        "inbox_log": "$INBOX_LOG_DB",
-        "completed": "$COMPLETED_DB"
+        "inbox_log": "$INBOX_LOG_DB"
       },
       "property_map": {
         "people": {

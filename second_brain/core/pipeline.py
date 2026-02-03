@@ -9,6 +9,7 @@ from second_brain.core.models import CaptureItem, ClassificationResult, StoredRe
 
 
 VALID_CATEGORIES = {"people", "projects", "ideas", "admin"}
+PRIORITY_PATTERN = re.compile(r"(?:^|\\s)(--priority|-p)(?:\\s+|=)([1-5])\\b", re.IGNORECASE)
 
 
 class Pipeline:
@@ -53,6 +54,7 @@ class Pipeline:
                 raw=result.raw,
             )
 
+        now = datetime.utcnow()
         log_entry = {
             "source_id": item.item_id,
             "source": item.source,
@@ -60,7 +62,7 @@ class Pipeline:
             "category": category,
             "title": result.title,
             "confidence": result.confidence,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now.isoformat(),
         }
 
         if result.confidence < self.confidence_threshold:
@@ -74,12 +76,9 @@ class Pipeline:
         record_fields = dict(result.fields)
         if "name" not in record_fields and "title" not in record_fields:
             record_fields["name"] = result.title
-        if explicit_priority:
-            record_fields["priority"] = str(priority)
-        elif "priority" not in record_fields and "Priority" not in record_fields:
-            record_fields["priority"] = str(priority)
+        _apply_priority(record_fields, priority, explicit_priority)
         if category == "people":
-            record_fields["last_touched"] = datetime.utcnow().date().isoformat()
+            record_fields["last_touched"] = now.date().isoformat()
         if category == "admin":
             due_date = record_fields.get("due_date", "")
             if not _is_reasonable_due_date(due_date):
@@ -111,18 +110,8 @@ def build_digest(
     notifier.notify_digest(f"{title}\n{summary.body}")
 
 
-def _is_valid_date(value: str) -> bool:
-    if not value:
-        return False
-    try:
-        datetime.fromisoformat(value)
-        return True
-    except ValueError:
-        return False
-
-
 def _is_reasonable_due_date(value: str) -> bool:
-    if not _is_valid_date(value):
+    if not value:
         return False
     try:
         due = datetime.fromisoformat(value).date()
@@ -132,12 +121,11 @@ def _is_reasonable_due_date(value: str) -> bool:
 
 
 def _extract_priority(text: str) -> tuple[str, Optional[int], bool]:
-    pattern = re.compile(r"(?:^|\\s)(--priority|-p)(?:\\s+|=)([1-5])\\b", re.IGNORECASE)
-    match = pattern.search(text)
+    match = PRIORITY_PATTERN.search(text)
     if not match:
         return text, None, False
     value = int(match.group(2))
-    cleaned = pattern.sub(" ", text).strip()
+    cleaned = PRIORITY_PATTERN.sub(" ", text).strip()
     return cleaned, value, True
 
 
@@ -152,3 +140,13 @@ def _infer_priority(text: str) -> int:
     if "backlog" in lowered:
         return 5
     return 3
+
+
+def _apply_priority(record_fields: dict, priority: int, explicit_priority: bool) -> None:
+    if explicit_priority:
+        key = "Priority" if "Priority" in record_fields and "priority" not in record_fields else "priority"
+        record_fields[key] = str(priority)
+        return
+    if "priority" in record_fields or "Priority" in record_fields:
+        return
+    record_fields["priority"] = str(priority)

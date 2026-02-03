@@ -27,7 +27,7 @@ class SlackNotifier(Notifier):
         request = urllib.request.Request(url, data=payload, method="POST")
         request.add_header("Authorization", f"Bearer {self.token}")
         request.add_header("Content-Type", "application/x-www-form-urlencoded")
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=8) as response:
             data = json.loads(response.read().decode("utf-8"))
         if not data.get("ok"):
             raise RuntimeError(f"Slack error: {data.get('error', 'unknown')}")
